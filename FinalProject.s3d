@@ -1,0 +1,505 @@
+/* Include s3d symbols */
+#include <Script3d.h>
+#include <Camera.s3d.h>
+
+#include "Header.h"
+#include "Bullet.h"
+#include "Player.h"
+#include "Level.h"
+
+function OnDownload()
+{
+    FileDownload("XVRResources.zip");
+}
+
+function OnInit(params)
+{
+    /* initialize camera */
+    CameraGetCurrent().SetPosition(CamPos);
+    CameraSetTarget(12,0,16);
+    
+    /***********************NETWORKING*******************/
+    //NetCreateChannel - Creates communication channel with host using UDP protocol
+    //                     - int port, string address, int flags 
+    //                      - VR_NO_BLOCKING to have a non-blocking data exchange
+    
+    global var channel1 = NetCreateChannel(50023,"0.0.0.0",VR_NO_BLOCKING);  
+    SetFrameRate(99999);  //the rate which the OnFrame() function is called
+    /****************************************************/
+
+    /* initialize light */
+    Light0 = CVmLight();
+    Light0.SetPosition(PosL);
+    Light0.SetDiffuse(1, 1, 1);
+    Light0.Enable();    
+
+    // TODO: put your initialization code here
+    mylevel = level();
+    mylevel.init("level.txt");
+    
+    /* Random positions */    
+    var player_x_z = return_x_z();
+    var player1_x  = player_x_z[0];
+    var player1_z  = player_x_z[1];
+    
+    mylevel.addplayer(MY_ID, [1,0,0],[player1_x,0,player1_z]);    		//add my player
+    getnormalFrequency =  mylevel.players_array[0].fx_shoot.getFrequency(); 	//get normal gun frequency
+    
+    for(var i = 1; i < 6; i++)    
+    {
+        index_id[i*4+0] = i;            	// player id
+        index_id[i*4+1] = 6;            	// player bullet
+        index_id[i*4+2] = 0;            	// player score
+        index_id[i*4+3] = 100;            	// player life
+                
+        take_new_gun[i*2+0] = i;        	//player id
+        take_new_gun[i*2+1] = 0;        	//index in the players array
+        
+        player_on_off[i] = 0;            	//0 player is inactive, else 1
+        
+        is_enemy_added[i*2+0] = i;        	//player id
+        is_enemy_added[i*2+1] = 0;        	//if player in set 1, else 0
+    }
+    
+    bullets_array= Array(6);            	//array of bullets
+    for(var i = 0; i < len(bullets_array); i++)    bullets_array[i] =i;
+    
+    bullet_counter = len(bullets_array);	//pointer to array of bullets                        
+    
+    /* Rocket gun */
+    random_gun_mesh = CVmNewMesh("rocketl.aam");
+    random_gun_mesh.scale(0.04);
+    gun_obj = CVmObj(random_gun_mesh);    
+    obj_random_gun = CVmObj();
+    obj_random_gun.addChild(gun_obj);
+    
+    var rand_gun_x_z = return_x_z();    	//return random x and z positions
+
+    ps 		= [rand_gun_x_z[0], 0, rand_gun_x_z[1]];        
+    gun[0] 	= rand_gun_x_z[0];                    
+    gun[1] 	= 0;
+    gun[2] 	= rand_gun_x_z[1];
+                 
+    obj_random_gun.setposition(ps);
+    obj_random_gun.ModulateMaterials([0,0,1]);
+}
+
+//return allowed random values of x and z
+function return_x_z()
+{
+    var x = Rand(29);
+    var z = Rand(28);
+     
+    //not allowed z positions
+    if(z == 0  || z == 2  ||
+       z == 10 || z == 15 ||    
+       z == 19 || z == 24 ||
+       z == 28)
+       z += 1; 
+    
+    //not allowed x positions
+    if(x == 0  || x == 1  ||
+       x == 3  || x == 4  ||
+       x == 28 || x == 29 
+    )  x += 2;
+    
+    if(x == 16 && (z == 11 ||
+       z == 12 ||  z == 13 ||    
+       z == 14 ||  z == 20 ||
+       z == 21 ||  z == 22 ||
+       z == 23))
+       x += 2;     
+       
+     array_x_z = Array(2);
+     array_x_z[0] = x;
+     array_x_z[1] = z;
+      
+     return(array_x_z);
+}
+
+function DrawScore()//draw on console the score, life and bullets of each player
+{
+    consolefont("Arial", 16);
+    
+    var y = 0.96;
+    var x = 0.75;
+    var z = 0.52;
+    
+    for(var i = 1; i< 5; i++)
+    {
+        var myScore = "Player "+ str(i) + " - Score: "+ str(index_id[i*4+2] );
+        var myBull =  "Player "+ str(i) + " - Bullets: "+ str(index_id[i*4+1] );
+        var myLife =  "Player "+ str(i) + " - Life: "+ str(index_id[i*4+3] );
+        
+        if(i == MY_ID)
+        {
+            consolecolor([1,0,0]);                                    //red for my player
+        }
+        else
+        {
+            if(i == g_enemy_id[i] && player_on_off[i] == 1)            //if enemy is in and active, set green
+            consolecolor([0,1,0]);
+            
+            else
+            consolecolor([1,1,1]);                                    //if enemy isnt in or in but inactive, set white
+
+        }        
+        consoletext(0.01, y, myScore);
+        consoletext(0.01, x, myBull);
+        consoletext(0.01, z, myLife);
+        
+        y -=0.03;
+        x -=0.03;
+        z -=0.03;
+    }
+}
+
+//assign a new gun to the player
+function new_gun(meshG, id_gun)
+{    
+    mylevel.players_array[id_gun].weapon_mesh = CVmNewMesh(meshG);
+    mylevel.players_array[id_gun].weapon_mesh.scale(0.04);
+    mylevel.players_array[id_gun].weapon_obj = CVmObj(mylevel.players_array[id_gun].weapon_mesh);    
+    
+    mylevel.players_array[id_gun].root_obj = CVmObj();
+    mylevel.players_array[id_gun].root_obj.addChild(mylevel.players_array[id_gun].upper_obj);
+    mylevel.players_array[id_gun].root_obj.addChild(mylevel.players_array[id_gun].lower_obj);
+    mylevel.players_array[id_gun].root_obj.addChild(mylevel.players_array[id_gun].weapon_obj);    
+    mylevel.players_array[id_gun].root_obj.setposition(mylevel.players_array[id_gun].position);    
+    mylevel.players_array[id_gun].root_obj.ModulateMaterials(mylevel.players_array[id_gun].color);
+    
+    mylevel.players_array[id_gun].player_bullet = bullet();
+    mylevel.players_array[id_gun].player_bullet.init(mylevel.players_array[id_gun].color);
+    
+    if(meshG == "rocketl.aam") 
+    {
+         mylevel.players_array[id_gun].fx_shoot.setFrequency(10000000);
+          mylevel.players_array[id_gun].gun_type = 1;
+    }
+    else
+    {   //normal gun
+        mylevel.players_array[id_gun].fx_shoot.setFrequency(getnormalFrequency);
+        mylevel.players_array[id_gun].gun_type = 0;
+    }
+    
+        
+}
+
+function OnFrame()
+{    
+    /* manage camera */        
+        
+    if(Keypressed(VK_NUMPAD1) || KeyPressed("1"))     globalcam = 1;  //if 1 is pressed, go to my player gun view
+    
+    if(Keypressed(VK_NUMPAD2) || KeyPressed("2"))     globalcam = 2;    //if 2 is pressed, go to my player body view
+    
+    if(Keypressed(VK_NUMPAD3) || KeyPressed("3"))     globalcam = 3;    //if 3 is pressed, go to my player side/360degrees view
+    
+    if(Keypressed(VK_NUMPAD0) || KeyPressed("0")) //if 0 is pressed go to the global camera
+    {
+        globalcam = 0;
+        CameraSetTarget(12,0,16);
+        CameraGetCurrent().SetPosition(CamPos);                
+    }
+    
+    switch(globalcam) //set the camera      
+    {
+        case 0: CameraMoveMouse(); break;                
+            
+        case 1: 
+        cameraGetCurrent().setPosition(mylevel.players_array[0].position + [0, 1.3, 0]);
+        cameraGetCurrent().setDirection(mylevel.players_array[0].direction); break;
+        
+        case 2:  
+        cameraGetCurrent().setPosition(mylevel.players_array[0].position + [0,1.8,0] - mylevel.players_array[0].direction*3.5);
+        CameraSetTarget(mylevel.players_array[0].position + [0,1.8,0]+mylevel.players_array[0].direction); break;
+        
+        case 3:  
+        cameraGetCurrent().setPosition(mylevel.players_array[0].position + [0, 1.8, -2]);
+        CameraSetTarget(mylevel.players_array[0].position + [0,1.5,0]+mylevel.players_array[0].direction); break;        
+    }
+    
+    networkFrame(); //receive all PDUs and send the ones that need to be sent  periodically
+    
+    light0.SetPosition(CameraGetPosition());
+    mylevel.update();    
+  
+    SceneBegin();
+
+    DrawGrid([0.5, 0.5, 0.5], 100);    
+    
+    mylevel.draw();
+    
+    SceneEnd();
+    
+    DrawScore();
+    
+    if(change_gun == true)        //give the player the rocket gun
+    {
+        meshG = "rocketl.aam";
+        new_gun(meshG, id_gun);
+        change_gun = false;
+        isGunTaken = true;
+        mylevel.players_array[0].fx_coin.Play();  //doesnt matter which player took the gun, just play gun change sound
+    }        
+}
+
+/********************************* NETWORKING FUNCTIONS****************************************/
+function MyReceive()
+{
+    var address1 = "................";        
+    var received_data = void;
+    
+    //NetVarReceiveFrom - receives contents from a remote host using the UDP protocol
+    //                    - int channel, string &address.
+    if(rand(100) < PACKET_LOSS_PROB)
+    {
+         NetVarReceiveFrom(channel1, &address1);
+    }
+    received_data = NetVarReceiveFrom(channel1, &address1);
+    return(received_data);
+}
+
+function networkFrame(thislevel) //receive all PDUs and send the ones that need to be sent  periodically
+{
+    var i;
+    
+    var loop = TRUE;
+    
+    while(loop)
+    {        
+        var received_data = MyReceive();        
+        
+        if(received_data!=void)        //if received anything
+        {
+            if(received_data[0] == 6)    trace(received_data);  //output the names and the values received_data on  MISSILE_PDU
+                    
+            if(received_data[1]!=MY_ID)
+            {                
+                if(received_data[0] == TAKE_GUN_PDU)            //enemy pressed 9 to take the random gun
+                    {    
+                        enemy_pressed_9 = true;                            
+                    }
+                    
+                if(received_data[0] == POSITION_PDU)            //enemy position
+                    {    
+                        var incoming_id = received_data[1];
+                        g_enemy_id[incoming_id]      = incoming_id;
+                        g_enemy_angle[incoming_id]   = received_data[5];                
+                        g_enemy_keepalive[incoming_id]     = getTime();
+                        
+                        //if enemy is added update his position
+                        //player 1, 2, ...n, on  diferrent positions in the beginning
+                        if(is_enemy_added[incoming_id*2+1] == 1)     
+                         {
+                             mylevel.players_array[g_enemy_added[incoming_id*2+1]].updateEnemyPosition(received_data);
+                         }                        
+                    }
+                    
+              if(received_data[0] == KEEPALIVE_PDU)            //keep enemy alive
+                    {
+                        var incoming_id = received_data[1];    
+                        g_enemy_keepalive[incoming_id]     = getTime();
+                    }
+                    
+              if(received_data[0] == MISSILE_PDU)   		//receive bullet info
+                    {
+                        var incoming_id = received_data[1];    
+                        
+                        index_id[incoming_id*4+1] = received_data[8];
+                        g_enemy_keepalive[incoming_id]  = getTime();                            
+                        mylevel.players_array[g_enemy_added[incoming_id*2+1]].ShootNet(received_data);                            
+                    }
+                    
+                     if(received_data[0] == RELOAD_PDU) 	//reload enemy gun
+                    {
+                        var incoming_id = received_data[1];                            
+                        index_id[incoming_id*4+1] = received_data[2];                            
+                        g_enemy_keepalive[incoming_id]  = getTime();                    
+                    }
+                    
+                    if(received_data[0] == BULLET_PDU)
+                    {
+                        var incoming_id = received_data[1];    
+                        
+                        if(received_data[2] < index_id[incoming_id*4+1]) //keep homogeneous bullets between all players
+                        {
+                            index_id[incoming_id*4+1] = received_data[2];
+                        }                            
+                        g_enemy_keepalive[incoming_id]  = getTime();                    
+                    }
+                    
+               if(received_data[0] == GUN_PDU)        //trace the position of the random gun
+                    {
+                        gun[0] = received_data[2];
+                        gun[1] = received_data[3];
+                        gun[2] = received_data[4];    
+                        
+                        ps = [gun[0], gun[1], gun[2]];
+                        
+                        obj_random_gun.setposition(ps);            
+                    }                
+                    
+              if(received_data[0] == SCORE_PDU)
+                    {
+                        var incoming_id = received_data[1];                
+                            
+                        if(received_data[4] != index_id[incoming_id*4+3]) //keep homogeneous life between all players
+                        index_id[incoming_id*4+3] =  received_data[4]; 
+                        
+                        if(received_data[3] != index_id[incoming_id*4+2]) //keep homogeneous score between all players
+                        {
+                            index_id[incoming_id*4+0] = received_data[1];
+                            index_id[incoming_id*4+2] = received_data[3];
+                            
+                            //update enemy  bullet position
+                            mylevel.players_array[g_enemy_added[incoming_id*2+1]].player_bullet.position = received_data[5];              
+                        }                                    
+                    }                          
+                   }
+            }else (loop=FALSE);
+      }
+      
+      while(loop);                    
+        
+        if(getTime() - keep_alive_timer > 300) //send KEEPALIVE_PDU every 300Ms
+        { 
+            keep_alive_timer = getTime();        
+        
+            var PDU = vector(3);
+            PDU[0]    = KEEPALIVE_PDU;
+            PDU[1]    = MY_ID;
+            
+            NetVarSendTo(BROADCAST_ADDRESS, 50023, PDU);    
+         }
+         
+        //to update the score 
+        if(getTime() - keep_alive_timer2 > 1000) //send SCORE_PDU, GUN_PDU, BULLET_PDU every 1000Ms
+        {
+            keep_alive_timer2 = getTime();
+        
+            var PDU    = array(8);
+            
+            PDU[0]    = SCORE_PDU;
+            for(i = 1; i < 6; i++)
+            {
+                    PDU[1]    = index_id[i*4+0];
+                    PDU[2]    = index_id[i*4+1];
+                    PDU[3]    = index_id[i*4+2];
+                    PDU[4]    = index_id[i*4+3];
+                    PDU[5]    = bullet_position_timer;
+                    
+                    NetVarSendTo(BROADCAST_ADDRESS, 50023, PDU);                                
+            }    
+            
+            var PDU2    = array(5);
+            
+            PDU2[0]    = GUN_PDU;        
+            PDU2[1]    = MY_ID;
+            PDU2[2]    = gun[0];
+            PDU2[3]    = gun[1];
+            PDU2[4]    = gun[2];
+                                
+            NetVarSendTo(BROADCAST_ADDRESS, 50023, PDU2);        
+            
+            var PDU3    = vector(3);
+        
+            PDU3[0]    = BULLET_PDU;
+            PDU3[1]    = MY_ID;
+            PDU3[2]    = bullet_counter;                        
+            NetVarSendTo(BROADCAST_ADDRESS, 50023, PDU3);                    
+        }                        
+        
+    for(i = 0; i < 5; i++)
+    {        
+        /*if enemy is alive and is not already added */
+        if(GetTime() - g_enemy_keepalive[i] < 1000 &&  g_enemy_keepalive[i] > 0 && is_enemy_added[g_enemy_id[i]*2+1] != 1) 
+        {
+            GetTime();                            
+    
+            mylevel.addplayer(g_enemy_id[i], [0,1,0],[0, 0, 0]);                                    //add enemy
+            mylevel.players_array[mylevel.players_number - 1].angle = g_enemy_angle[g_enemy_id[i]]; //set the angle
+
+            g_enemy_added[i*2+0] = g_enemy_id[i];                            //enemy id
+            g_enemy_added[i*2+1] = mylevel.players_number - 1;               //enemy index on players array
+        
+            take_new_gun[g_enemy_id[i]*2+1] = mylevel.players_number - 1;    //enemy index in the players array    
+            
+            is_enemy_added[g_enemy_id[i]*2+1] = 1;   //assign true to is_enemy_added
+            
+            if(isGunTaken == true)//if there is a player holding the rocket gun, make him drop it when a new enemy arrives
+                {
+                    meshG = "railgun.aam";
+                    new_gun(meshG, id_gun);    
+                    change_gun = false;
+                    isGunTaken = false;
+                }            
+         }        
+    }    
+}
+/******************************************************************************************************/
+
+function DownloadReady(RequestID)
+{
+    // TODO
+}
+
+function OnTimer()
+{
+    // TODO:
+}
+
+function OnEvent(eventID, wparam, lparam){
+    // TODO: put your events handling code here
+}
+
+function OnError(){
+    // TODO: put your errors handling code here
+}
+
+function OnExit()
+{
+    // TODO: put your cleanup code here
+}
+
+// Camera manager (using mouse)
+function CameraMoveMouse()
+{    
+    CameraMoveMouse_MBL_LC();
+}
+
+function DrawGrid(col, size)
+{
+    /* let's not mess up current OpenGL status */
+    glPushAttrib(GL_LIGHTING_BIT | GL_LINE_BIT | GL_CURRENT_BIT);
+    
+    glLineWidth(1);
+    glDisable(GL_LIGHTING);
+    glColor(col);
+    var max = size / 2.0;
+    var min = -max;    
+    var step = size / 10.0;
+    
+    glBegin(GL_LINES);
+        for (var i = min; i <= max; i += step)
+        {
+            glVertex(i, 0, max);
+            glVertex(i, 0, min);
+            
+            glVertex(max, 0, i);
+            glVertex(min, 0, i);
+        }
+    glEnd();
+    
+    /* polite restoration of previous OpenGL status */
+    glPopAttrib();
+}
+
+function distance(pos1,pos2)               //return distance between pos1 and pos2
+{
+    var temp2 = [pos2.x, 0, pos2.z];
+    var temp1 = [pos1.x, 0, pos1.z];
+    return(modulus(temp2-temp1));
+}
+
+
