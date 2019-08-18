@@ -1,7 +1,7 @@
 # Augmented-Virtual-Reality: Feb 2014
 
 This is a Networked Virtual Reallity project which 
-the goal was to depevelop a game in which multiple users interact with each other in real-time, even though those users
+the goal was to develop a game in which multiple users interact with each other in real-time, even though those users
 may be located around the world. <br><br>
 The game was developed under XVR (eXtreme Virtual Reality), an IDE dedicated to virtual reality and augmented reality 
 applications. 
